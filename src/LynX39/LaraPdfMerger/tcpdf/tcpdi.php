@@ -1,6 +1,6 @@
 <?php
-//  
-//  TCPDI - Version 1.0
+//
+//  TCPDI - Version 1.1
 //  Based on FPDI - Version 1.4.4
 //
 //    Copyright 2004-2013 Setasign - Jan Slabon
@@ -38,19 +38,19 @@ class TCPDI extends FPDF_TPL {
      * @var array
      */
     var $parsers;
-    
+
     /**
      * Current parser
      * @var object
      */
     var $current_parser;
-    
+
     /**
      * object stack
      * @var array
      */
     var $_obj_stack;
-    
+
     /**
      * done object stack
      * @var array
@@ -62,20 +62,37 @@ class TCPDI extends FPDF_TPL {
      * @var integer
      */
     var $_current_obj_id;
-    
+
     /**
      * The name of the last imported page box
      * @var string
      */
     var $lastUsedPageBox;
-    
+
     /**
      * Cache for imported pages/template ids
      * @var array
      */
     var $_importedPages = array();
 
-    var $bufferlen;
+    /**
+     * Cache for imported page annotations
+     * @var array
+     */
+    var $_importedAnnots = array();
+
+    /**
+     * Number of TOC pages, used for annotation offset
+     * @var integer
+     */
+    var $_numTOCpages = 0;
+
+    /**
+     * First TOC page, used for annotation offset
+     * @var integer
+     */
+    var $_TOCpagenum = 0;
+
     /**
      * Set a source-file
      *
@@ -84,15 +101,15 @@ class TCPDI extends FPDF_TPL {
      */
     function setSourceFile($filename) {
         $this->current_filename = $filename;
-        
+
         if (!isset($this->parsers[$filename]))
             $this->parsers[$filename] = $this->_getPdfParser($filename);
         $this->current_parser =& $this->parsers[$filename];
         $this->setPDFVersion(max($this->getPDFVersion(), $this->current_parser->getPDFVersion()));
-        
+
         return $this->parsers[$filename]->getPageCount();
     }
-    
+
     /**
      * Set a source-file PDF data
      *
@@ -102,15 +119,15 @@ class TCPDI extends FPDF_TPL {
     function setSourceData($pdfdata) {
         $filename = uniqid('tcpdi-');
         $this->current_filename = $filename;
-        
+
         if (!isset($this->parsers[$filename]))
             $this->parsers[$filename] = new tcpdi_parser($pdfdata, $filename);
         $this->current_parser =& $this->parsers[$filename];
         $this->setPDFVersion(max($this->getPDFVersion(), $this->current_parser->getPDFVersion()));
-        
+
         return $this->parsers[$filename]->getPageCount();
     }
-    
+
     /**
      * Returns a PDF parser object
      *
@@ -119,27 +136,27 @@ class TCPDI extends FPDF_TPL {
      */
     function _getPdfParser($filename) {
         $data = file_get_contents($filename);
-    	return new tcpdi_parser($data, $filename);
+        return new tcpdi_parser($data, $filename);
     }
-    
+
     /**
      * Get the current PDF version
      *
      * @return string
      */
     function getPDFVersion() {
-		return $this->PDFVersion;
-	}
-    
-	/**
+        return $this->PDFVersion;
+    }
+
+    /**
      * Set the PDF version
      *
      * @return string
      */
-	function setPDFVersion($version = '1.3') {
-		$this->PDFVersion = $version;
-	}
-	
+    function setPDFVersion($version = '1.3') {
+        $this->PDFVersion = $version;
+    }
+
     /**
      * Import a page
      *
@@ -150,22 +167,22 @@ class TCPDI extends FPDF_TPL {
         if ($this->_intpl) {
             return $this->error('Please import the desired pages before creating a new template.');
         }
-        
+
         $fn = $this->current_filename;
-        
+
         // check if page already imported
         $pageKey = $fn . '-' . ((int)$pageno) . $boxName;
         if (isset($this->_importedPages[$pageKey]))
             return $this->_importedPages[$pageKey];
-        
+
         $parser =& $this->parsers[$fn];
         $parser->setPageno($pageno);
 
         if (!in_array($boxName, $parser->availableBoxes))
             return $this->Error(sprintf('Unknown box: %s', $boxName));
-            
+
         $pageboxes = $parser->getPageBoxes($pageno, $this->k);
-        
+
         /**
          * MediaBox
          * CropBox: Default -> MediaBox
@@ -177,14 +194,14 @@ class TCPDI extends FPDF_TPL {
             $boxName = '/CropBox';
         if (!isset($pageboxes[$boxName]) && $boxName == '/CropBox')
             $boxName = '/MediaBox';
-        
+
         if (!isset($pageboxes[$boxName]))
             return false;
-            
+
         $this->lastUsedPageBox = $boxName;
-        
+
         $box = $pageboxes[$boxName];
-        
+
         $this->tpl++;
         $this->tpls[$this->tpl] = array();
         $tpl =& $this->tpls[$this->tpl];
@@ -192,36 +209,161 @@ class TCPDI extends FPDF_TPL {
         $tpl['resources'] = $parser->getPageResources();
         $tpl['buffer'] = $parser->getContent();
         $tpl['box'] = $box;
-        
+
         // To build an array that can be used by PDF_TPL::useTemplate()
         $this->tpls[$this->tpl] = array_merge($this->tpls[$this->tpl], $box);
-        
+
         // An imported page will start at 0,0 everytime. Translation will be set in _putformxobjects()
         $tpl['x'] = 0;
         $tpl['y'] = 0;
-        
+
         // handle rotated pages
         $rotation = $parser->getPageRotation($pageno);
         $tpl['_rotationAngle'] = 0;
         if (isset($rotation[1]) && ($angle = $rotation[1] % 360) != 0) {
-        	$steps = $angle / 90;
-                
+            $steps = $angle / 90;
+
             $_w = $tpl['w'];
             $_h = $tpl['h'];
             $tpl['w'] = $steps % 2 == 0 ? $_w : $_h;
             $tpl['h'] = $steps % 2 == 0 ? $_h : $_w;
-            
+
             if ($angle < 0)
-            	$angle += 360;
-            
-        	$tpl['_rotationAngle'] = $angle * -1;
+                $angle += 360;
+
+            $tpl['_rotationAngle'] = $angle * -1;
         }
-        
+
         $this->_importedPages[$pageKey] = $this->tpl;
-        
         return $this->tpl;
     }
-    
+
+    function setPageFormatFromTemplatePage($pageno, $orientation) {
+        $fn = $this->current_filename;
+        $parser =& $this->parsers[$fn];
+        $parser->setPageno($pageno);
+        $boxes = $parser->getPageBoxes($pageno, $this->k);
+        foreach ($boxes as $name => $box) {
+            if ($name{0} == '/') {
+                $boxes[substr($name, 1)] = $box;
+                unset($boxes[$name]);
+            }
+        }
+        $this->setPageFormat($boxes, $orientation);
+    }
+
+    /* Wrapper for AddPage() which tracks TOC pages to offset annotations later */
+    function AddPage($orientation='', $format='', $keepmargins=false, $tocpage=false) {
+        if ($this->inxobj) {
+            // we are inside an XObject template
+            return;
+        }
+        parent::AddPage($orientation, $format, $keepmargins, $tocpage);
+        if ($this->tocpage) {
+            $this->_numTOCpages++;
+        }
+    }
+
+    /* Wrapper for AddTOC() which tracks TOC position to offset annotations later */
+    function AddTOC($page='', $numbersfont='', $filler='.', $toc_name='TOC', $style='', $color=array(0,0,0)) {
+        if (!TCPDF_STATIC::empty_string($page)) {
+            $this->_TOCpagenum = $page;
+        } else {
+            $this->_TOCpagenum = $this->page;
+        }
+
+        parent::AddTOC($page, $numbersfont, $filler, $toc_name, $style, $color);
+    }
+
+    function importAnnotations($pageno) {
+        $fn = $this->current_filename;
+        $parser =& $this->parsers[$fn];
+        $parser->setPageno($pageno);
+        $annots = $parser->getPageAnnotations();
+
+        if (is_array($annots) && $annots[0] == PDF_TYPE_OBJECT // We got an object
+            && is_array($annots[1]) && $annots[1][0] == PDF_TYPE_ARRAY // It's an array
+            && is_array($annots[1][1]) && count($annots[1][1] > 1) // It's not empty - there are annotations for this page
+        ) {
+            if (!isset($this->_obj_stack[$fn])) {
+                $this->_obj_stack[$fn] = array();
+            }
+
+            $this->_importedAnnots[$this->page] = array();
+            foreach ($annots[1][1] as $annot) {
+                $this->importAnnotation($annot);
+            }
+        }
+    }
+
+    function importAnnotation($annotation) {
+        $fn = $this->current_filename;
+        $old_id = $annotation[1];
+        $value = array(PDF_TYPE_OBJREF, $old_id, 0);
+        if (!isset($this->_don_obj_stack[$fn][$old_id])) {
+            $this->_newobj(false, true);
+            $this->_obj_stack[$fn][$old_id] = array($this->n, $value);
+            $this->_don_obj_stack[$fn][$old_id] = array($this->n, $value);
+        }
+        $objid = $this->_don_obj_stack[$fn][$old_id][0];
+        $this->_importedAnnots[$this->page][] = $objid;
+    }
+
+
+    /**
+     * Get references to page annotations.
+     * @param $n (int) page number
+     * @return string
+     * @protected
+     * @author Nicola Asuni
+     * @since 5.0.010 (2010-05-17)
+     */
+    protected function _getannotsrefs($n) {
+        if (!empty($this->_numTOCpages) && $n >= $this->_TOCpagenum) {
+            // Offset page number to account for TOC being inserted before page containing annotations.
+            $n -= $this->_numTOCpages;
+        }
+        if (!(isset($this->_importedAnnots[$n]) OR isset($this->PageAnnots[$n]) OR ($this->sign AND isset($this->signature_data['cert_type'])))) {
+            return '';
+        }
+        $out = ' /Annots [';
+        if (isset($this->_importedAnnots[$n])) {
+            foreach ($this->_importedAnnots[$n] as $key => $val) {
+                $out .= ' '.$val.' 0 R';
+            }
+        }
+        if (isset($this->PageAnnots[$n])) {
+            foreach ($this->PageAnnots[$n] as $key => $val) {
+                if (!in_array($val['n'], $this->radio_groups)) {
+                    $out .= ' '.$val['n'].' 0 R';
+                }
+            }
+            // add radiobutton groups
+            if (isset($this->radiobutton_groups[$n])) {
+                foreach ($this->radiobutton_groups[$n] as $key => $data) {
+                    if (isset($data['n'])) {
+                        $out .= ' '.$data['n'].' 0 R';
+                    }
+                }
+            }
+        }
+        if ($this->sign AND ($n == $this->signature_appearance['page']) AND isset($this->signature_data['cert_type'])) {
+            // set reference for signature object
+            $out .= ' '.$this->sig_obj_id.' 0 R';
+        }
+        if (!empty($this->empty_signature_appearance)) {
+            foreach ($this->empty_signature_appearance as $esa) {
+                if ($esa['page'] == $n) {
+                    // set reference for empty signature objects
+                    $out .= ' '.$esa['objid'].' 0 R';
+                }
+            }
+        }
+        $out .= ' ]';
+        return $out;
+    }
+
+
     /**
      * Returns the last used page box
      *
@@ -230,24 +372,24 @@ class TCPDI extends FPDF_TPL {
     function getLastUsedPageBox() {
         return $this->lastUsedPageBox;
     }
-    
-    
+
+
     function useTemplate($tplidx, $_x = null, $_y = null, $_w = 0, $_h = 0, $adjustPageSize = false) {
         if ($adjustPageSize == true && is_null($_x) && is_null($_y)) {
             $size = $this->getTemplateSize($tplidx, $_w, $_h);
             $orientation = $size['w'] > $size['h'] ? 'L' : 'P';
             $size = array($size['w'], $size['h']);
-            
+
             $this->setPageFormat($size, $orientation);
         }
-        
+
         $this->_out('q 0 J 1 w 0 j 0 G 0 g'); // reset standard values
         $s = parent::useTemplate($tplidx, $_x, $_y, $_w, $_h);
         $this->_out('Q');
-        
+
         return $s;
     }
-    
+
     /**
      * Private method, that rebuilds all needed objects of source files
      */
@@ -258,15 +400,15 @@ class TCPDI extends FPDF_TPL {
                 if (isset($this->_obj_stack[$filename]) && is_array($this->_obj_stack[$filename])) {
                     while(($n = key($this->_obj_stack[$filename])) !== null) {
                         $nObj = $this->current_parser->getObjectVal($this->_obj_stack[$filename][$n][1]);
-						
+
                         $this->_newobj($this->_obj_stack[$filename][$n][0]);
-                        
+
                         if ($nObj[0] == PDF_TYPE_STREAM) {
-							$this->pdf_write_value($nObj);
+                            $this->pdf_write_value($nObj);
                         } else {
                             $this->pdf_write_value($nObj[1]);
                         }
-                        
+
                         $this->_out('endobj');
                         $this->_obj_stack[$filename][$n] = null; // free memory
                         unset($this->_obj_stack[$filename][$n]);
@@ -280,56 +422,56 @@ class TCPDI extends FPDF_TPL {
             }
         }
     }
-    
-    
+
+
     /**
      * Private Method that writes the form xobjects
      */
     function _putformxobjects() {
         $filter=($this->compress) ? '/Filter /FlateDecode ' : '';
-	    reset($this->tpls);
+        reset($this->tpls);
         foreach($this->tpls AS $tplidx => $tpl) {
             $p=($this->compress) ? gzcompress($tpl['buffer']) : $tpl['buffer'];
-    		$this->_newobj();
-    		$cN = $this->n; // TCPDF/Protection: rem current "n"
-    		
-    		$this->tpls[$tplidx]['n'] = $this->n;
-    		$this->_out('<<' . $filter . '/Type /XObject');
+            $this->_newobj();
+            $cN = $this->n; // TCPDF/Protection: rem current "n"
+
+            $this->tpls[$tplidx]['n'] = $this->n;
+            $this->_out('<<' . $filter . '/Type /XObject');
             $this->_out('/Subtype /Form');
             $this->_out('/FormType 1');
-            
-            $this->_out(sprintf('/BBox [%.2F %.2F %.2F %.2F]', 
+
+            $this->_out(sprintf('/BBox [%.2F %.2F %.2F %.2F]',
                 (isset($tpl['box']['llx']) ? $tpl['box']['llx'] : $tpl['x']) * $this->k,
                 (isset($tpl['box']['lly']) ? $tpl['box']['lly'] : -$tpl['y']) * $this->k,
                 (isset($tpl['box']['urx']) ? $tpl['box']['urx'] : $tpl['w'] + $tpl['x']) * $this->k,
                 (isset($tpl['box']['ury']) ? $tpl['box']['ury'] : $tpl['h'] - $tpl['y']) * $this->k
             ));
-            
+
             $c = 1;
             $s = 0;
             $tx = 0;
             $ty = 0;
-            
+
             if (isset($tpl['box'])) {
                 $tx = -$tpl['box']['llx'];
-                $ty = -$tpl['box']['lly']; 
-                
+                $ty = -$tpl['box']['lly'];
+
                 if ($tpl['_rotationAngle'] <> 0) {
                     $angle = $tpl['_rotationAngle'] * M_PI/180;
                     $c=cos($angle);
                     $s=sin($angle);
-                    
+
                     switch($tpl['_rotationAngle']) {
                         case -90:
-                           $tx = -$tpl['box']['lly'];
-                           $ty = $tpl['box']['urx'];
-                           break;
+                            $tx = -$tpl['box']['lly'];
+                            $ty = $tpl['box']['urx'];
+                            break;
                         case -180:
                             $tx = $tpl['box']['urx'];
                             $ty = $tpl['box']['ury'];
                             break;
                         case -270:
-                        	$tx = $tpl['box']['ury'];
+                            $tx = $tpl['box']['ury'];
                             $ty = -$tpl['box']['llx'];
                             break;
                     }
@@ -338,16 +480,16 @@ class TCPDI extends FPDF_TPL {
                 $tx = -$tpl['x'] * 2;
                 $ty = $tpl['y'] * 2;
             }
-            
+
             $tx *= $this->k;
             $ty *= $this->k;
-            
+
             if ($c != 1 || $s != 0 || $tx != 0 || $ty != 0) {
                 $this->_out(sprintf('/Matrix [%.5F %.5F %.5F %.5F %.5F %.5F]',
                     $c, $s, -$s, $c, $tx, $ty
                 ));
             }
-            
+
             $this->_out('/Resources ');
 
             if (isset($tpl['resources'])) {
@@ -355,42 +497,42 @@ class TCPDI extends FPDF_TPL {
                 $this->pdf_write_value($tpl['resources']); // "n" will be changed
             } else {
                 $this->_out('<</ProcSet [/PDF /Text /ImageB /ImageC /ImageI]');
-            	if (isset($this->_res['tpl'][$tplidx]['fonts']) && count($this->_res['tpl'][$tplidx]['fonts'])) {
-                	$this->_out('/Font <<');
+                if (isset($this->_res['tpl'][$tplidx]['fonts']) && count($this->_res['tpl'][$tplidx]['fonts'])) {
+                    $this->_out('/Font <<');
                     foreach($this->_res['tpl'][$tplidx]['fonts'] as $font)
-                		$this->_out('/F' . $font['i'] . ' ' . $font['n'] . ' 0 R');
-                	$this->_out('>>');
+                        $this->_out('/F' . $font['i'] . ' ' . $font['n'] . ' 0 R');
+                    $this->_out('>>');
                 }
-            	if(isset($this->_res['tpl'][$tplidx]['images']) && count($this->_res['tpl'][$tplidx]['images']) || 
-            	   isset($this->_res['tpl'][$tplidx]['tpls']) && count($this->_res['tpl'][$tplidx]['tpls']))
-            	{
+                if(isset($this->_res['tpl'][$tplidx]['images']) && count($this->_res['tpl'][$tplidx]['images']) ||
+                    isset($this->_res['tpl'][$tplidx]['tpls']) && count($this->_res['tpl'][$tplidx]['tpls']))
+                {
                     $this->_out('/XObject <<');
                     if (isset($this->_res['tpl'][$tplidx]['images']) && count($this->_res['tpl'][$tplidx]['images'])) {
                         foreach($this->_res['tpl'][$tplidx]['images'] as $image)
-                  			$this->_out('/I' . $image['i'] . ' ' . $image['n'] . ' 0 R');
+                            $this->_out('/I' . $image['i'] . ' ' . $image['n'] . ' 0 R');
                     }
                     if (isset($this->_res['tpl'][$tplidx]['tpls']) && count($this->_res['tpl'][$tplidx]['tpls'])) {
                         foreach($this->_res['tpl'][$tplidx]['tpls'] as $i => $tpl)
                             $this->_out($this->tplprefix . $i . ' ' . $tpl['n'] . ' 0 R');
                     }
                     $this->_out('>>');
-            	}
-            	$this->_out('>>');
+                }
+                $this->_out('>>');
             }
-            
+
             $this->_out('/Group <</Type/Group/S/Transparency>>');
-            
+
             $nN = $this->n; // TCPDF: rem new "n"
             $this->n = $cN; // TCPDF: reset to current "n"
 
-        	$p = $this->_getrawstream($p);
-        	$this->_out('/Length ' . strlen($p) . ' >>');
-        	$this->_out("stream\n" . $p . "\nendstream");
+            $p = $this->_getrawstream($p);
+            $this->_out('/Length ' . strlen($p) . ' >>');
+            $this->_out("stream\n" . $p . "\nendstream");
 
-    		$this->_out('endobj');
-    		$this->n = $nN; // TCPDF: reset to new "n"
+            $this->_out('endobj');
+            $this->n = $nN; // TCPDF: reset to new "n"
         }
-        
+
         $this->_putimportedobjects();
     }
 
@@ -408,7 +550,7 @@ class TCPDI extends FPDF_TPL {
             $this->_out($obj_id . ' 0 obj');
             $this->_current_obj_id = $obj_id; // for later use with encryption
         }
-        
+
         return $obj_id;
     }
 
@@ -426,9 +568,9 @@ class TCPDI extends FPDF_TPL {
                     $value[1] = $this->_unescape($value[1]);
                     $value[1] = $this->_encrypt_data($this->_current_obj_id, $value[1]);
                     $value[1] = TCPDF_STATIC::_escape($value[1]);
-                } 
+                }
                 break;
-                
+
             case PDF_TYPE_STREAM:
                 if ($this->encrypted) {
                     $value[2][1] = $this->_encrypt_data($this->_current_obj_id, $value[2][1]);
@@ -438,18 +580,18 @@ class TCPDI extends FPDF_TPL {
                     );
                 }
                 break;
-                
+
             case PDF_TYPE_HEX:
                 if ($this->encrypted) {
                     $value[1] = $this->hex2str($value[1]);
                     $value[1] = $this->_encrypt_data($this->_current_obj_id, $value[1]);
-                    
+
                     // remake hexstring of encrypted string
                     $value[1] = $this->str2hex($value[1]);
                 }
                 break;
         }
-        
+
         switch ($value[0]) {
 
             case PDF_TYPE_TOKEN:
@@ -463,7 +605,7 @@ class TCPDI extends FPDF_TPL {
                     $this->_straightOut($value[1] . ' ');
                 }
                 break;
-                
+
             case PDF_TYPE_ARRAY:
 
                 // An array. Output the proper
@@ -484,7 +626,7 @@ class TCPDI extends FPDF_TPL {
 
                 reset ($value[1]);
 
-                foreach ($value[1] as $k => $v) {
+                while (list($k, $v) = each($value[1])) {
                     $this->_straightOut($k . ' ');
                     $this->pdf_write_value($v);
                 }
@@ -497,7 +639,7 @@ class TCPDI extends FPDF_TPL {
                 // An indirect object reference
                 // Fill the object stack if needed
                 $cpfn =& $this->current_parser->uniqueid;
-                
+
                 if (!isset($this->_don_obj_stack[$cpfn][$value[1]])) {
                     $this->_newobj(false, true);
                     $this->_obj_stack[$cpfn][$value[1]] = array($this->n, $value);
@@ -525,7 +667,7 @@ class TCPDI extends FPDF_TPL {
                 $this->_out($value[2][1]);
                 $this->_out('endstream');
                 break;
-                
+
             case PDF_TYPE_HEX:
                 $this->_straightOut('<' . $value[1] . '>');
                 break;
@@ -533,7 +675,7 @@ class TCPDI extends FPDF_TPL {
             case PDF_TYPE_BOOLEAN:
                 $this->_straightOut($value[1] ? 'true ' : 'false ');
                 break;
-            
+
             case PDF_TYPE_NULL:
                 // The null object.
 
@@ -541,31 +683,31 @@ class TCPDI extends FPDF_TPL {
                 break;
         }
     }
-    
+
     /**
      * Modified so not each call will add a newline to the output.
      */
     function _straightOut($s) {
         if ($this->state == 2) {
-			if ($this->inxobj) {
-				// we are inside an XObject template
-				$this->xobjects[$this->xobjid]['outdata'] .= $s;
-			} elseif ((!$this->InFooter) AND isset($this->footerlen[$this->page]) AND ($this->footerlen[$this->page] > 0)) {
-				// puts data before page footer
-				$pagebuff = $this->getPageBuffer($this->page);
-				$page = substr($pagebuff, 0, -$this->footerlen[$this->page]);
-				$footer = substr($pagebuff, -$this->footerlen[$this->page]);
-				$this->setPageBuffer($this->page, $page.$s.$footer);
-				// update footer position
-				$this->footerpos[$this->page] += strlen($s);
-			} else {
-				// set page data
-				$this->setPageBuffer($this->page, $s, true);
-			}
-		} elseif ($this->state > 0) {
-			// set general data
-			$this->setBuffer($s);
-		}
+            if ($this->inxobj) {
+                // we are inside an XObject template
+                $this->xobjects[$this->xobjid]['outdata'] .= $s;
+            } elseif ((!$this->InFooter) AND isset($this->footerlen[$this->page]) AND ($this->footerlen[$this->page] > 0)) {
+                // puts data before page footer
+                $pagebuff = $this->getPageBuffer($this->page);
+                $page = substr($pagebuff, 0, -$this->footerlen[$this->page]);
+                $footer = substr($pagebuff, -$this->footerlen[$this->page]);
+                $this->setPageBuffer($this->page, $page.$s.$footer);
+                // update footer position
+                $this->footerpos[$this->page] += strlen($s);
+            } else {
+                // set page data
+                $this->setPageBuffer($this->page, $s, true);
+            }
+        } elseif ($this->state > 0) {
+            // set general data
+            $this->setBuffer($s);
+        }
     }
 
     /**
@@ -576,34 +718,34 @@ class TCPDI extends FPDF_TPL {
         parent::_enddoc();
         $this->_closeParsers();
     }
-    
+
     /**
      * close all files opened by parsers
      */
     function _closeParsers() {
         if ($this->state > 2 && count($this->parsers) > 0) {
-          	$this->cleanUp();
+            $this->cleanUp();
             return true;
         }
         return false;
     }
-    
+
     /**
      * Removes cylced references and closes the file handles of the parser objects
      */
     function cleanUp() {
-    	foreach ($this->parsers as $k => $_){
-        	$this->parsers[$k]->cleanUp();
-        	$this->parsers[$k] = null;
-        	unset($this->parsers[$k]);
+        foreach ($this->parsers as $k => $_){
+            $this->parsers[$k]->cleanUp();
+            $this->parsers[$k] = null;
+            unset($this->parsers[$k]);
         }
     }
-    
+
     // Functions from here on are taken from FPDI's fpdi2tcpdf_bridge.php to remove dependence on it
     function _putstream($s, $n=0) {
         $this->_out($this->_getstream($s, $n));
     }
-    
+
     function _getxobjectdict() {
         $out = parent::_getxobjectdict();
         if (count($this->tpls)) {
@@ -611,10 +753,10 @@ class TCPDI extends FPDF_TPL {
                 $out .= sprintf('%s%d %d 0 R', $this->tplprefix, $tplidx, $tpl['n']);
             }
         }
-        
+
         return $out;
     }
-    
+
     /**
      * Unescapes a PDF string
      *
@@ -659,17 +801,17 @@ class TCPDI extends FPDF_TPL {
                         if (ord($s[$count]) >= ord('0') &&
                             ord($s[$count]) <= ord('9')) {
                             $oct = ''. $s[$count];
-                                
+
                             if (ord($s[$count+1]) >= ord('0') &&
                                 ord($s[$count+1]) <= ord('9')) {
                                 $oct .= $s[++$count];
-                                
+
                                 if (ord($s[$count+1]) >= ord('0') &&
                                     ord($s[$count+1]) <= ord('9')) {
-                                    $oct .= $s[++$count];    
-                                }                            
+                                    $oct .= $s[++$count];
+                                }
                             }
-                            
+
                             $out .= chr(octdec($oct));
                         } else {
                             $out .= $s[$count];
@@ -679,7 +821,7 @@ class TCPDI extends FPDF_TPL {
         }
         return $out;
     }
-    
+
     /**
      * Hexadecimal to string
      *
@@ -689,7 +831,7 @@ class TCPDI extends FPDF_TPL {
     function hex2str($hex) {
         return pack('H*', str_replace(array("\r", "\n", ' '), '', $hex));
     }
-    
+
     /**
      * String to hexadecimal
      *

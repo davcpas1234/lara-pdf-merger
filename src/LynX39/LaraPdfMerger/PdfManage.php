@@ -80,6 +80,7 @@ class PdfManage
 
                     if ($orientation == null) $fileorientation = $size['w'] < $size['h'] ? 'P' : 'L';
 
+                    $this->_fpdi->importAnnotations($i);
                     $this->_fpdi->AddPage($fileorientation, array($size['w'], $size['h']));
                     $this->_fpdi->useTemplate($template);
                 }
@@ -92,6 +93,7 @@ class PdfManage
 
                     if ($orientation == null) $fileorientation = $size['w'] < $size['h'] ? 'P' : 'L';
 
+                    $this->_fpdi->importAnnotations($i);
                     $this->_fpdi->AddPage($fileorientation, array($size['w'], $size['h']));
                     $this->_fpdi->useTemplate($template);
 
