@@ -1,9 +1,9 @@
 <?php
 //============================================================+
 // File name   : tcpdi_parser.php
-// Version     : 1.0
+// Version     : 1.1
 // Begin       : 2013-09-25
-// Last Update : 2013-09-25
+// Last Update : 2016-05-03
 // Author      : Paul Nicholls - https://github.com/pauln
 // License     : GNU-LGPL v3 (http://www.gnu.org/copyleft/lesser.html)
 //
@@ -44,7 +44,7 @@
  * This is a PHP class for parsing PDF documents.<br>
  * @author Paul Nicholls
  * @author Nicola Asuni
- * @version 1.0
+ * @version 1.1
  */
 
 // include class for decoding filters
@@ -82,7 +82,7 @@ if (!defined ('PDF_TYPE_REAL'))
  * This is a PHP class for parsing PDF documents.<br>
  * Based on TCPDF_PARSER, part of the TCPDF project by Nicola Asuni.
  * @brief This is a PHP class for parsing PDF documents..
- * @version 1.0
+ * @version 1.1
  * @author Paul Nicholls - github.com/pauln
  * @author Nicola Asuni - info@tecnick.com
  */
@@ -483,7 +483,7 @@ class tcpdi_parser {
             $v = $sarr[$key];
             if (($key == '/Type') AND ($v[0] == PDF_TYPE_TOKEN AND ($v[1] == 'XRef'))) {
                 $valid_crs = true;
-            } elseif (($key == '/Index') AND ($v[0] == PDF_TYPE_ARRAY AND ($v[1] >= 2))) {
+            } elseif (($key == '/Index') AND ($v[0] == PDF_TYPE_ARRAY AND count($v[1] >= 2))) {
                 // first object number in the subsection
                 $index_first = intval($v[1][0][1]);
                 // number of entries in the subsection
@@ -709,11 +709,11 @@ class tcpdi_parser {
         $objtype = ''; // object type to be returned
         $objval = ''; // object value to be returned
         // skip initial white space chars: \x00 null (NUL), \x09 horizontal tab (HT), \x0A line feed (LF), \x0C form feed (FF), \x0D carriage return (CR), \x20 space (SP)
-        while (strspn($data[$offset], "\x00\x09\x0a\x0c\x0d\x20") == 1) {
+        while (strspn($data{$offset}, "\x00\x09\x0a\x0c\x0d\x20") == 1) {
             $offset++;
         }
         // get first char
-        $char = $data[$offset];
+        $char = $data{$offset};
         // get object type
         switch ($char) {
             case '%': { // \x25 PERCENT SIGN
@@ -744,10 +744,10 @@ class tcpdi_parser {
                 if ($char == '(') {
                     $open_bracket = 1;
                     while ($open_bracket > 0) {
-                        if (!isset($data[$strpos])) {
+                        if (!isset($data{$strpos})) {
                             break;
                         }
-                        $ch = $data[$strpos];
+                        $ch = $data{$strpos};
                         switch ($ch) {
                             case '\\': { // REVERSE SOLIDUS (5Ch) (Backslash)
                                 // skip next character
@@ -792,7 +792,7 @@ class tcpdi_parser {
             }
             case '<':   // \x3C LESS-THAN SIGN
             case '>': { // \x3E GREATER-THAN SIGN
-                if (isset($data[($offset + 1)]) AND ($data[($offset + 1)] == $char)) {
+                if (isset($data{($offset + 1)}) AND ($data{($offset + 1)} == $char)) {
                     // dictionary object
                     $objtype = PDF_TYPE_DICTIONARY;
                     if ($char == '<') {
@@ -815,7 +815,7 @@ class tcpdi_parser {
                 break;
             }
             default: {
-                $frag = $data[$offset] . @$data[$offset+1] . @$data[$offset+2] . @$data[$offset+3];
+                $frag = $data{$offset} . @$data{$offset+1} . @$data{$offset+2} . @$data{$offset+3};
                 switch ($frag) {
                     case 'endo':
                         // indirect object
@@ -892,16 +892,16 @@ class tcpdi_parser {
         $dict = '';
         $offset += 2;
         do {
-            if ($data[$offset] == '>' && $data[$offset+1] == '>') {
+            if ($data{$offset} == '>' && $data{$offset+1} == '>') {
                 $i--;
                 $dict .= '>>';
                 $offset += 2;
-            } else if ($data[$offset] == '<' && $data[$offset+1] == '<') {
+            } else if ($data{$offset} == '<' && $data{$offset+1} == '<') {
                 $i++;
                 $dict .= '<<';
                 $offset += 2;
             } else {
-                $dict .= $data[$offset];
+                $dict .= $data{$offset};
                 $offset++;
             }
         } while ($i>0);
@@ -1219,6 +1219,42 @@ class tcpdi_parser {
         }
     }
 
+    /**
+     * Get annotations from current page
+     *
+     * @return array
+     */
+    public function getPageAnnotations() {
+        return $this->_getPageAnnotations($this->pages[$this->pageno]);
+    }
+
+    /**
+     * Get annotations from /Page
+     *
+     * @param array $obj Array of pdf-data
+     */
+    private function _getPageAnnotations ($obj) { // $obj = /Page
+        $obj = $this->getObjectVal($obj);
+
+        // If the current object has an annotations
+        // dictionary associated with it, we use
+        // it. Otherwise, we move back to its
+        // parent object.
+        if (isset ($obj[1][1]['/Annots'])) {
+            $annots = $obj[1][1]['/Annots'];
+        } else {
+            if (!isset ($obj[1][1]['/Parent'])) {
+                return false;
+            } else {
+                $annots = $this->_getPageAnnotations($obj[1][1]['/Parent']);
+            }
+        }
+
+        if ($annots[0] == PDF_TYPE_OBJREF)
+            return $this->getObjectVal($annots);
+        return $annots;
+    }
+
 
     /**
      * Get content of current page
@@ -1324,14 +1360,14 @@ class tcpdi_parser {
         if (!is_null($box) && $box[0] == PDF_TYPE_ARRAY) {
             $b =& $box[1];
             return array('x' => $b[0][1] / $k,
-                         'y' => $b[1][1] / $k,
-                         'w' => abs($b[0][1] - $b[2][1]) / $k,
-                         'h' => abs($b[1][1] - $b[3][1]) / $k,
-                         'llx' => min($b[0][1], $b[2][1]) / $k,
-                         'lly' => min($b[1][1], $b[3][1]) / $k,
-                         'urx' => max($b[0][1], $b[2][1]) / $k,
-                         'ury' => max($b[1][1], $b[3][1]) / $k,
-                         );
+                'y' => $b[1][1] / $k,
+                'w' => abs($b[0][1] - $b[2][1]) / $k,
+                'h' => abs($b[1][1] - $b[3][1]) / $k,
+                'llx' => min($b[0][1], $b[2][1]) / $k,
+                'lly' => min($b[1][1], $b[3][1]) / $k,
+                'urx' => max($b[0][1], $b[2][1]) / $k,
+                'ury' => max($b[1][1], $b[3][1]) / $k,
+            );
         } elseif (!isset ($page[1][1]['/Parent'])) {
             return false;
         } else {
@@ -1390,8 +1426,7 @@ class tcpdi_parser {
                 return false;
             } else {
                 $res = $this->_getPageRotation($obj[1][1]['/Parent']);
-
-                if (is_array($res) && $res[0] == PDF_TYPE_OBJECT)
+                if ($res[0] == PDF_TYPE_OBJECT)
                     return $res[1];
                 return $res;
             }
