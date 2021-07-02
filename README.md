@@ -19,7 +19,7 @@ This Package was tested on **Laravel 7.0**
 * Require this package in your composer.json by adding those lines
 
 ```
-composer require daltcore/lara-pdf-merger
+composer require davcpas1234/lara-pdf-merger
 ```
 
 * Run  this commend in your terminal
@@ -73,6 +73,7 @@ $pdfMerger->save("file_name.pdf", "download");
 ## Authors
 * [RamonSmit](https://github.com/RamonSmit)
 * [MarwenSami](https://github.com/MarwenSami)
+* [davcpas1234](https://github.com/davcpas1234)
 
 
 ## Credits
