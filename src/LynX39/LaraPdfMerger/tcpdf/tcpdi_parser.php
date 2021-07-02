@@ -47,6 +47,9 @@
  * @version 1.1
  */
 
+// include class for decoding filters
+require_once(dirname(__FILE__).'/include/tcpdf_filters.php');
+
 if (!defined ('PDF_TYPE_NULL'))
     define ('PDF_TYPE_NULL', 0);
 if (!defined ('PDF_TYPE_NUMERIC'))
