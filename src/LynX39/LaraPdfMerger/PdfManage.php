@@ -75,18 +75,21 @@ class PdfManage
             //add the pages
             if ($filepages == 'all') {
                 for ($i = 1; $i <= $count; $i++) {
-                    $template = $this->_fpdi->importPage($i);
+                    $template = $this->_fpdi->importPage($i, '/BleedBox');
                     $size = $this->_fpdi->getTemplateSize($template);
 
                     if ($orientation == null) $fileorientation = $size['w'] < $size['h'] ? 'P' : 'L';
 
                     $this->_fpdi->AddPage($fileorientation, array($size['w'], $size['h']));
+
+                    $this->_fpdi->setPageFormatFromTemplatePage($i, $fileorientation);
+
                     $this->_fpdi->useTemplate($template);
                     $this->_fpdi->importAnnotations($i);
                 }
             } else {
                 foreach ($filepages as $page) {
-                    if (!$template = $this->_fpdi->importPage($page)) {
+                    if (!$template = $this->_fpdi->importPage($page, '/BleedBox')) {
                         throw new Exception("Could not load page '$page' in PDF '$filename'. Check that the page exists.");
                     }
                     $size = $this->_fpdi->getTemplateSize($template);
@@ -94,6 +97,9 @@ class PdfManage
                     if ($orientation == null) $fileorientation = $size['w'] < $size['h'] ? 'P' : 'L';
 
                     $this->_fpdi->AddPage($fileorientation, array($size['w'], $size['h']));
+
+                    $this->_fpdi->setPageFormatFromTemplatePage($page, $fileorientation);
+
                     $this->_fpdi->useTemplate($template);
                     $this->_fpdi->importAnnotations($page);
 
